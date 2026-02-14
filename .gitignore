@@ -1,0 +1,33 @@
+# Vector database (local only)
+chroma_db/
+
+# Timestamps (contain local paths)
+*_timestamps.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Virtual environment
+.venv/
+gm-assistant/
+venv/
+env/
+
+# Environment variables and secrets
+.env
+*.key
+
+# User data - DO NOT COMMIT
+vault/
+*.md
+*.pdf
+
+# Obsidian
+.obsidian/
+
+# OS files
+.DS_Store
+Thumbs.db
