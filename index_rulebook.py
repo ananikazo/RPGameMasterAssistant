@@ -1,30 +1,21 @@
+"""Index PDF rulebook pages into ChromaDB for semantic search.
+
+Reads PDF files from GM_VAULT_PATH, extracts each page as a separate
+document, and stores them in the 'rulebook' ChromaDB collection.
+Performs incremental indexing based on file modification timestamps.
+
+Usage:
+    GM_VAULT_PATH=./vault GM_CHROMA_PATH=./chroma_db python index_rulebook.py
+"""
 import chromadb
-from sentence_transformers import SentenceTransformer
 import os
 from pypdf import PdfReader
-import json
+from index_utils import load_timestamps, save_timestamps, get_file_mtime
 
 # Configuration from environment variables
 VAULT_PATH = os.environ.get("GM_VAULT_PATH", "./vault")
 CHROMA_DB_PATH = os.environ.get("GM_CHROMA_PATH", "./chroma_db")
 TIMESTAMP_FILE = "index_rulebook_timestamps.json"
-
-def load_timestamps():
-    if os.path.exists(TIMESTAMP_FILE):
-        with open(TIMESTAMP_FILE, 'r') as f:
-            return json.load(f)
-    return {}
-
-def save_timestamps(timestamps):
-    with open(TIMESTAMP_FILE, 'w') as f:
-        json.dump(timestamps, f)
-
-def get_file_mtime(filepath):
-    return os.path.getmtime(filepath)
-
-# Load embedding model
-print("Loading embedding model...")
-model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # Create Chroma client
 client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
@@ -35,7 +26,7 @@ rulebook_metas = []
 rulebook_ids = []
 
 print(f"Reading rulebook from: {VAULT_PATH}")
-timestamps = load_timestamps()
+timestamps = load_timestamps(TIMESTAMP_FILE)
 
 for root, dirs, files in os.walk(VAULT_PATH):
     for file in files:
@@ -63,8 +54,8 @@ for root, dirs, files in os.walk(VAULT_PATH):
             for page_num in range(len(pdf.pages)):
                 try:
                     rulebook_collection.delete(ids=[f"{filepath}_page_{page_num + 1}"])
-                except:
-                    pass
+                except Exception:
+                    pass  # Page does not exist yet – safely ignorable
             
             # Each page as separate document
             for page_num, page in enumerate(pdf.pages):
@@ -82,7 +73,7 @@ for root, dirs, files in os.walk(VAULT_PATH):
         except Exception as e:
             print(f"  Error with {file}: {e}")
 
-save_timestamps(timestamps)
+save_timestamps(timestamps, TIMESTAMP_FILE)
 
 # Index in Chroma
 if rulebook_docs:

@@ -1,3 +1,12 @@
+"""Reset ChromaDB collections and timestamp files for a clean re-index.
+
+Deletes the 'campaign' and 'rulebook' collections from ChromaDB and
+removes the corresponding timestamp JSON files. Run this before a
+full re-index of all files.
+
+Usage:
+    GM_CHROMA_PATH=./chroma_db python index_clear_db.py
+"""
 import chromadb
 import os
 
@@ -10,13 +19,13 @@ client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
 try:
     client.delete_collection(name="campaign")
     print("✓ Collection 'campaign' deleted")
-except:
+except Exception:
     print("⚠ Collection 'campaign' does not exist")
 
 try:
     client.delete_collection(name="rulebook")
     print("✓ Collection 'rulebook' deleted")
-except:
+except Exception:
     print("⚠ Collection 'rulebook' does not exist")
 
 # Delete timestamps
