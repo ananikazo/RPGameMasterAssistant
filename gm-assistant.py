@@ -21,6 +21,7 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='repla
 
 # Configuration from environment variables
 CHROMA_DB_PATH = os.environ.get("GM_CHROMA_PATH", "./chroma_db")
+INSTRUCTIONS_FILE = os.environ.get("GM_INSTRUCTIONS_FILE", "./instructions.txt")
 
 # Constants
 MODEL_NAME = "claude-sonnet-4-5-20250929"
@@ -30,6 +31,25 @@ COMPLEXITY_COMPLEX_DOCS = 20
 CLASSIFY_MAX_TOKENS = 50
 ANSWER_MAX_TOKENS = 2048
 TERMINAL_WIDTH = 80
+
+
+def load_instructions(filepath: str) -> str:
+    """Load API instructions from a text file.
+
+    Args:
+        filepath: Path to the instructions text file.
+
+    Returns:
+        The file contents as a string, stripped of leading/trailing whitespace.
+
+    Raises:
+        SystemExit: If the file cannot be read.
+    """
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError as e:
+        sys.exit(f"Error: Could not read instructions file '{filepath}': {e}")
 
 
 def classify_complexity(question: str, client: anthropic.Anthropic) -> int:
@@ -111,16 +131,12 @@ def print_debug_sources(metadatas: list, source_type: str) -> None:
     print("=== DEBUG END ===\n")
 
 
-def get_answer(question: str, context: str, client: anthropic.Anthropic) -> str:
+def get_answer(
+    question: str, context: str, instructions: str, client: anthropic.Anthropic
+) -> str:
     """Send question with context to Claude and return the answer text."""
     prompt = (
-        "You are a tabletop RPG game master assistant.\n"
-        "Answer precisely and concisely. Keep responses short unless explicitly asked for details.\n"
-        "Respond in plain text without markdown formatting.\n"
-        "\n"
-        "Context hints:\n"
-        "- Text in [[Name]] are note links to other documents\n"
-        "- Answer based only on the provided context\n"
+        f"{instructions}\n"
         "\n"
         f"Relevant context:\n{context}\n"
         "\n"
@@ -146,6 +162,9 @@ def print_answer(answer: str) -> None:
 if __name__ == "__main__":
     # API client
     ai_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+
+    # Load instructions from file
+    api_instructions = load_instructions(INSTRUCTIONS_FILE)
 
     # Load Chroma database
     print("Loading database...")
@@ -189,7 +208,7 @@ if __name__ == "__main__":
         source_type = "CAMPAIGN" if mode == "1" else "RULEBOOK"
         print_debug_sources(metadatas, source_type)
 
-        answer = get_answer(question, context, ai_client)
+        answer = get_answer(question, context, api_instructions, ai_client)
         print_answer(answer)
 
     print("\nGoodbye!")
