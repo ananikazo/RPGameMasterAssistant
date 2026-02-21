@@ -1,29 +1,20 @@
+"""Index Markdown campaign notes into ChromaDB for semantic search.
+
+Reads .md files from GM_VAULT_PATH, performs incremental indexing
+based on file modification timestamps, and stores documents in the
+'campaign' ChromaDB collection.
+
+Usage:
+    GM_VAULT_PATH=./vault GM_CHROMA_PATH=./chroma_db python index_campaign.py
+"""
 import chromadb
-from sentence_transformers import SentenceTransformer
 import os
-import json
+from index_utils import load_timestamps, save_timestamps, get_file_mtime
 
 # Configuration from environment variables
 VAULT_PATH = os.environ.get("GM_VAULT_PATH", "./vault")
 CHROMA_DB_PATH = os.environ.get("GM_CHROMA_PATH", "./chroma_db")
 TIMESTAMP_FILE = "index_campaign_timestamps.json"
-
-def load_timestamps():
-    if os.path.exists(TIMESTAMP_FILE):
-        with open(TIMESTAMP_FILE, 'r') as f:
-            return json.load(f)
-    return {}
-
-def save_timestamps(timestamps):
-    with open(TIMESTAMP_FILE, 'w') as f:
-        json.dump(timestamps, f)
-
-def get_file_mtime(filepath):
-    return os.path.getmtime(filepath)
-
-# Load embedding model
-print("Loading embedding model...")
-model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # Create Chroma client
 client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
@@ -34,7 +25,7 @@ campaign_metas = []
 campaign_ids = []
 
 print(f"Reading campaign notes from: {VAULT_PATH}")
-timestamps = load_timestamps()
+timestamps = load_timestamps(TIMESTAMP_FILE)
 
 for root, dirs, files in os.walk(VAULT_PATH):
     for file in files:
@@ -52,8 +43,8 @@ for root, dirs, files in os.walk(VAULT_PATH):
         # Delete and re-index
         try:
             campaign_collection.delete(ids=[filepath])
-        except:
-            pass
+        except Exception:
+            pass  # Document does not exist yet – safely ignorable
 
         # Debug: Show what's being indexed
         status = "NEW" if filepath not in timestamps else "CHANGED"
@@ -67,7 +58,7 @@ for root, dirs, files in os.walk(VAULT_PATH):
             campaign_metas.append({"filename": file, "path": filepath})
             campaign_ids.append(filepath)
 
-save_timestamps(timestamps)
+save_timestamps(timestamps, TIMESTAMP_FILE)
 
 # Index in Chroma
 if campaign_docs:

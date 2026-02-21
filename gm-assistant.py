@@ -1,9 +1,18 @@
+"""Interactive GM assistant using Claude API and ChromaDB for semantic search.
+
+Presents a menu to query either campaign notes or rulebook content.
+Retrieves relevant context via vector search and answers via Claude.
+
+Usage:
+    GM_CHROMA_PATH=./chroma_db ANTHROPIC_API_KEY=... python gm-assistant.py
+"""
 import os
-import anthropic
-import chromadb
-import textwrap
 import sys
 import io
+import textwrap
+
+import anthropic
+import chromadb
 
 # UTF-8 encoding for input/output
 sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8', errors='replace')
@@ -13,141 +22,174 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='repla
 # Configuration from environment variables
 CHROMA_DB_PATH = os.environ.get("GM_CHROMA_PATH", "./chroma_db")
 
-# API Key
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+# Constants
+MODEL_NAME = "claude-sonnet-4-5-20250929"
+COMPLEXITY_SIMPLE_DOCS = 5
+COMPLEXITY_MEDIUM_DOCS = 12
+COMPLEXITY_COMPLEX_DOCS = 20
+CLASSIFY_MAX_TOKENS = 50
+ANSWER_MAX_TOKENS = 2048
+TERMINAL_WIDTH = 80
 
-# Load Chroma database
-print("Loading database...")
-chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-campaign_collection = chroma_client.get_collection(name="campaign")
-rulebook_collection = chroma_client.get_collection(name="rulebook")
 
-def classify_complexity(question, client):
-    """Let Claude determine question complexity"""
+def classify_complexity(question: str, client: anthropic.Anthropic) -> int:
+    """Classify question complexity and return the number of documents to retrieve.
+
+    Returns 5 for simple, 12 for medium, and 20 for complex questions.
+    """
     message = client.messages.create(
-        model="claude-sonnet-4-5-20250929",
-        max_tokens=50,
+        model=MODEL_NAME,
+        max_tokens=CLASSIFY_MAX_TOKENS,
         messages=[{
             "role": "user",
-            "content": f"""Classify this question's complexity:
-- simple (3-5 documents): Specific question about one person/rule
-- medium (8-12 documents): Comparisons, connections, multiple aspects
-- complex (15-20 documents): Lists, overviews, "all X", comprehensive analysis
-
-Examples:
-- "Who is John?" → simple
-- "List all classes" → complex
-- "Compare fighter and wizard" → medium
-
-Question: {question}
-
-Answer with only one word: simple, medium, or complex"""
+            "content": (
+                f'Classify this question\'s complexity:\n'
+                f'- simple (3-5 documents): Specific question about one person/rule\n'
+                f'- medium (8-12 documents): Comparisons, connections, multiple aspects\n'
+                f'- complex (15-20 documents): Lists, overviews, "all X", comprehensive analysis\n'
+                f'\n'
+                f'Examples:\n'
+                f'- "Who is John?" \u2192 simple\n'
+                f'- "List all classes" \u2192 complex\n'
+                f'- "Compare fighter and wizard" \u2192 medium\n'
+                f'\n'
+                f'Question: {question}\n'
+                f'\n'
+                f'Answer with only one word: simple, medium, or complex'
+            ),
         }]
     )
-    
+
     complexity = message.content[0].text.strip().lower()
-    
+
     if complexity == "simple":
-        return 5
+        return COMPLEXITY_SIMPLE_DOCS
     elif complexity == "complex":
-        return 20
+        return COMPLEXITY_COMPLEX_DOCS
     else:  # medium
-        return 12
+        return COMPLEXITY_MEDIUM_DOCS
 
-print("GM Assistant ready! (Type 'quit' to exit)\n")
 
-# Interactive loop
-while True:
-    print("\n[1] Campaign question")
-    print("[2] Rules question")
-    print("[3] Exit")
-    
-    mode = input("\nSelect mode (1/2/3): ").strip()
-    
-    if mode == "3" or mode.lower() == "quit":
-        break
-    
-    if mode not in ["1", "2"]:
-        print("Invalid selection!")
-        continue
-    
-    question = input("\nYour question: ")
-    
-    # Determine complexity
-    num_results = classify_complexity(question, client)
-    print(f"[Complexity: {num_results} documents]")
-    
-    if mode == "1":  # Campaign only
-        question_type = "campaign"
-        
-        campaign_results = campaign_collection.query(
-            query_texts=[question],
-            n_results=num_results
-        )
-        
-        # Build context from campaign only
-        vault_content = ""
-        for i, doc in enumerate(campaign_results['documents'][0]):
-            filename = campaign_results['metadatas'][0][i]['filename']
-            vault_content += f"\n\n=== CAMPAIGN: {filename} ===\n{doc}"
-        
-        # Debug output
-        print("\n=== DEBUG: Found documents ===")
-        for i, meta in enumerate(campaign_results['metadatas'][0]):
-            print(f"{i+1}. Campaign: {meta.get('filename', 'unknown')}")
-        print("=== DEBUG END ===\n")
-        
-    else:  # Rules only
-        question_type = "rules"
-        
-        rulebook_results = rulebook_collection.query(
-            query_texts=[question],
-            n_results=num_results
-        )
-        
-        # Build context from rulebook only
-        vault_content = ""
-        for i, doc in enumerate(rulebook_results['documents'][0]):
-            meta = rulebook_results['metadatas'][0][i]
-            filename = meta.get('filename', 'Rulebook')
-            page = meta.get('page', 'N/A')
-            vault_content += f"\n\n=== RULEBOOK: {filename} Page {page} ===\n{doc}"
-        
-        # Debug output
-        print("\n=== DEBUG: Found documents ===")
-        for i, meta in enumerate(rulebook_results['metadatas'][0]):
-            print(f"{i+1}. Rulebook: {meta.get('filename', 'unknown')} p.{meta.get('page', 'N/A')}")
-        print("=== DEBUG END ===\n")
-    
-    # Ask Claude
-    message = client.messages.create(
-        model="claude-sonnet-4-5-20250929",
-        max_tokens=2048,
-        messages=[{
-            "role": "user",
-            "content": f"""You are a tabletop RPG game master assistant.
-Answer precisely and concisely. Keep responses short unless explicitly asked for details.
-Respond in plain text without markdown formatting.
+def query_collection(
+    collection: chromadb.Collection,
+    question: str,
+    num_results: int,
+    source_type: str,
+) -> tuple:
+    """Query a ChromaDB collection and build a context string.
 
-Context hints:
-- Text in [[Name]] are note links to other documents
-- Answer based only on the provided context
+    Args:
+        collection: The ChromaDB collection to query.
+        question: The user's question as query text.
+        num_results: Number of documents to retrieve.
+        source_type: Label for the source, e.g. "CAMPAIGN" or "RULEBOOK".
 
-Relevant context:
-{vault_content}
-
-Question: {question}"""
-        }]
+    Returns:
+        A tuple of (context_string, list_of_metadata_dicts).
+    """
+    results = collection.query(
+        query_texts=[question],
+        n_results=num_results,
     )
-    
-    answer = message.content[0].text
-    
+    context = ""
+    for i, doc in enumerate(results['documents'][0]):
+        meta = results['metadatas'][0][i]
+        label = f"{source_type}: {meta.get('filename', 'unknown')}"
+        if source_type == "RULEBOOK":
+            label += f" Page {meta.get('page', 'N/A')}"
+        context += f"\n\n=== {label} ===\n{doc}"
+    return context, results['metadatas'][0]
+
+
+def print_debug_sources(metadatas: list, source_type: str) -> None:
+    """Print debug information about retrieved source documents."""
+    print("\n=== DEBUG: Found documents ===")
+    for i, meta in enumerate(metadatas):
+        name = meta.get('filename', 'unknown')
+        page = f" p.{meta.get('page', 'N/A')}" if source_type == "RULEBOOK" else ""
+        print(f"{i + 1}. {source_type}: {name}{page}")
+    print("=== DEBUG END ===\n")
+
+
+def get_answer(question: str, context: str, client: anthropic.Anthropic) -> str:
+    """Send question with context to Claude and return the answer text."""
+    prompt = (
+        "You are a tabletop RPG game master assistant.\n"
+        "Answer precisely and concisely. Keep responses short unless explicitly asked for details.\n"
+        "Respond in plain text without markdown formatting.\n"
+        "\n"
+        "Context hints:\n"
+        "- Text in [[Name]] are note links to other documents\n"
+        "- Answer based only on the provided context\n"
+        "\n"
+        f"Relevant context:\n{context}\n"
+        "\n"
+        f"Question: {question}"
+    )
+    message = client.messages.create(
+        model=MODEL_NAME,
+        max_tokens=ANSWER_MAX_TOKENS,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return message.content[0].text
+
+
+def print_answer(answer: str) -> None:
+    """Format and print the answer, handling encoding issues gracefully."""
     try:
-        formatted = textwrap.fill(answer, width=80)
-        print(f"\nAnswer:\n{formatted}")
+        print(f"\nAnswer:\n{textwrap.fill(answer, width=TERMINAL_WIDTH)}")
     except UnicodeEncodeError:
         clean = answer.encode('utf-8', errors='replace').decode('utf-8')
-        formatted = textwrap.fill(clean, width=80)
-        print(f"\nAnswer:\n{formatted}")
+        print(f"\nAnswer:\n{textwrap.fill(clean, width=TERMINAL_WIDTH)}")
 
-print("\nGoodbye!")
+
+if __name__ == "__main__":
+    # API client
+    ai_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+
+    # Load Chroma database
+    print("Loading database...")
+    chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+    campaign_collection = chroma_client.get_collection(name="campaign")
+    rulebook_collection = chroma_client.get_collection(name="rulebook")
+
+    print("GM Assistant ready! (Type 'quit' to exit)\n")
+
+    while True:
+        print("\n[1] Campaign question")
+        print("[2] Rules question")
+        print("[3] Exit")
+
+        mode = input("\nSelect mode (1/2/3): ").strip()
+
+        if mode == "3" or mode.lower() == "quit":
+            break
+
+        if mode not in ["1", "2"]:
+            print("Invalid selection!")
+            continue
+
+        question = input("\nYour question: ").strip()
+        if not question:
+            print("Please enter a question.")
+            continue
+
+        num_results = classify_complexity(question, ai_client)
+        print(f"[Complexity: {num_results} documents]")
+
+        if mode == "1":
+            context, metadatas = query_collection(
+                campaign_collection, question, num_results, "CAMPAIGN"
+            )
+        else:
+            context, metadatas = query_collection(
+                rulebook_collection, question, num_results, "RULEBOOK"
+            )
+
+        source_type = "CAMPAIGN" if mode == "1" else "RULEBOOK"
+        print_debug_sources(metadatas, source_type)
+
+        answer = get_answer(question, context, ai_client)
+        print_answer(answer)
+
+    print("\nGoodbye!")
