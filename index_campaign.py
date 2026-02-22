@@ -27,6 +27,13 @@ campaign_ids = []
 print(f"Reading campaign notes from: {VAULT_PATH}")
 timestamps = load_timestamps(TIMESTAMP_FILE)
 
+# If the collection is empty, force a full re-index regardless of saved timestamps.
+# This covers cases where the DB was cleared without removing the timestamp file,
+# or where a previous run failed after saving timestamps but before writing to ChromaDB.
+if campaign_collection.count() == 0 and timestamps:
+    print("Collection is empty – forcing full re-index.")
+    timestamps = {}
+
 for root, dirs, files in os.walk(VAULT_PATH):
     for file in files:
         if not file.endswith(".md"):
