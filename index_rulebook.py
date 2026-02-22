@@ -136,10 +136,16 @@ for root, dirs, files in os.walk(VAULT_PATH):
         try:
             pdf = PdfReader(filepath)
 
-            # Delete all existing chunks for this file before re-indexing
-            existing = rulebook_collection.get(where={"path": filepath})
-            if existing["ids"]:
-                rulebook_collection.delete(ids=existing["ids"])
+            # Delete all existing chunks for this file before re-indexing.
+            # Guard against empty-collection errors (e.g. first run with no
+            # prior documents) by isolating the lookup/delete in its own
+            # try-except – nothing to delete on an empty collection anyway.
+            try:
+                existing = rulebook_collection.get(where={"path": filepath})
+                if existing["ids"]:
+                    rulebook_collection.delete(ids=existing["ids"])
+            except Exception:
+                pass  # Collection is empty; no existing chunks to remove
 
             # Extract text per page (1-based), skipping blank pages
             pages_text = []
