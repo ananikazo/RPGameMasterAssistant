@@ -116,7 +116,7 @@ def query_collection(
         meta = results['metadatas'][0][i]
         label = f"{source_type}: {meta.get('filename', 'unknown')}"
         if source_type == "RULEBOOK":
-            label += f" Page {meta.get('page', 'N/A')}"
+            label += f" Pages {meta.get('pages', 'N/A')}"
         context += f"\n\n=== {label} ===\n{doc}"
     return context, results['metadatas'][0]
 
@@ -126,7 +126,7 @@ def print_debug_sources(metadatas: list, source_type: str) -> None:
     print("\n=== DEBUG: Found documents ===")
     for i, meta in enumerate(metadatas):
         name = meta.get('filename', 'unknown')
-        page = f" p.{meta.get('page', 'N/A')}" if source_type == "RULEBOOK" else ""
+        page = f" pp.{meta.get('pages', 'N/A')}" if source_type == "RULEBOOK" else ""
         print(f"{i + 1}. {source_type}: {name}{page}")
     print("=== DEBUG END ===\n")
 
